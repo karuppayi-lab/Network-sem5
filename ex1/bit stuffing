@@ -1,0 +1,187 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#define MAX_STR_LEN 100
+#define MAX_BITS (MAX_STR_LEN * 8 * 2)
+#define CRC_POLY 0x1021
+unsigned short calculate_crc(const int *bits, int length) {
+    unsigned short crc = 0xFFFF;
+    int i;
+    for (i = 0; i < length; i++) {
+        bool bit = (bits[i] == 1);
+        bool c15 = (crc >> 15) & 1;
+        crc <<= 1;
+        if (c15 ^ bit) {
+            crc ^= CRC_POLY;
+        }
+    }
+    return crc;
+}
+void print_bits(const int *bits, int length) {
+    int i;
+    for (i = 0; i < length; i++) {
+        printf("%d", bits[i]);
+        if ((i + 1) % 8 == 0 && (i + 1) < length) {
+            printf(" ");
+        }
+    }
+    printf("\n");
+}
+void print_bits_as_string(const int *bits, int length) {
+    if (length <= 0 || length % 8 != 0) {
+        printf("[Cannot decode: Bit structure corrupted/incomplete]\n");
+        return;
+    }
+    int i, j;
+    for (i = 0; i < length; i += 8) {
+        char ch = 0;
+        for (j = 0; j < 8; j++) {
+            ch = (ch << 1) | bits[i + j];
+        }
+        printf("%c", ch);
+    }
+    printf("\n");
+}
+int append_crc(int *bits, int length) {
+    unsigned short crc = calculate_crc(bits, length);
+    int i;
+    for (i = 15; i >= 0; i--) {
+        bits[length++] = (crc >> i) & 1;
+    }
+    return length;
+}
+int bit_stuff(const int *input, int in_len, int *output) {
+    int out_len = 0;
+    int count = 0;
+    int i;
+    for (i = 0; i < in_len; i++) {
+        output[out_len++] = input[i];
+        if (input[i] == 1) {
+            count++;
+            if (count == 5) {
+                output[out_len++] = 0;
+                count = 0;
+            }
+        } else {
+            count = 0;
+        }
+    }
+    return out_len;
+}
+int sender_side(const char *input_str, int *original_data, int *orig_len, int *stuffed_frame) {
+    *orig_len = 0;
+    int data_with_crc[MAX_BITS];
+    int str_len = strlen(input_str);
+    int i;
+    for (i = 0; i < str_len; i++) {
+        char ch = input_str[i];
+        int b;
+        for (b = 7; b >= 0; b--) {
+            int bit = (ch >> b) & 1;
+            original_data[*orig_len] = bit;
+            data_with_crc[*orig_len] = bit;
+            (*orig_len)++;
+        }
+    }
+    int crc_len = append_crc(data_with_crc, *orig_len);
+    int stuffed_len = bit_stuff(data_with_crc, crc_len, stuffed_frame);
+    return stuffed_len;
+}
+int bit_destuff(const int *input, int in_len, int *output) {
+    int out_len = 0;
+    int count = 0;
+    int i;
+    for (i = 0; i < in_len; i++) {
+        output[out_len++] = input[i];
+        if (input[i] == 1) {
+            count++;
+            if (count == 5) {
+                if (i + 1 < in_len && input[i + 1] == 0) {
+                    i++;
+                }
+                count = 0;
+            }
+        } else {
+            count = 0;
+        }
+    }
+    return out_len;
+}
+void receiver_side(const int *received_frame, int stuffed_len, const char *original_str, const int *original_binary, int orig_binary_len, const int *stuffed_bits) {
+    int destuffed_frame[MAX_BITS];
+    int destuffed_len = bit_destuff(received_frame, stuffed_len, destuffed_frame);
+    unsigned short check_remainder = calculate_crc(destuffed_frame, destuffed_len);
+    bool is_valid = (check_remainder == 0);
+
+    printf("Original Input String : %s\n", original_str);
+    printf("Original Binary Data  : "); print_bits(original_binary, orig_binary_len);
+    printf("Stuffed Frame Bits    : "); print_bits(stuffed_bits, stuffed_len);
+    printf("Received Frame Bits   : "); print_bits(received_frame, stuffed_len);
+    printf("De-stuffed Data Bits  : ");
+    if (destuffed_len >= 16) {
+        print_bits(destuffed_frame, destuffed_len - 16);
+        printf("Decoded Output Text   : ");
+        print_bits_as_string(destuffed_frame, destuffed_len - 16);
+    } else {
+        printf("Corrupted Frame Structure Destroyed\n");
+    }
+    printf("\nError Detection Status: ");
+    if (is_valid) {
+        printf("Data received correctly without errors.\n");
+    } else {
+        printf("Errors detected!\n");
+    }
+    printf("=====================\n");
+}
+int main() {
+    while (1) {
+        char input_str[MAX_STR_LEN];
+        int original_data[MAX_BITS];
+        int stuffed_frame[MAX_BITS];
+        int transmitted_frame[MAX_BITS];
+        int received_frame[MAX_BITS];
+        int orig_len = 0;
+        printf("\nEnter the string: ");
+        fgets(input_str, sizeof(input_str), stdin);
+        input_str[strcspn(input_str, "\n")] = '\0';
+        int stuffed_len = sender_side(input_str, original_data, &orig_len, stuffed_frame);
+        memcpy(transmitted_frame, stuffed_frame, stuffed_len * sizeof(int));
+        printf("\n--- Menu ---\n");
+        printf("1. No Errors \n");
+        printf("2. Introduce Single-Bit Error\n");
+        printf("3. Introduce Multi-Bit Error\n");
+        printf("4. Exit Program\n");
+        printf("Enter choice: ");
+        int choice;
+        if (scanf("%d", &choice) != 1) {
+            while (getchar() != '\n');
+            continue;
+        }
+        while (getchar() != '\n');
+        if (choice == 4) {
+            printf("Exiting program....!\n");
+            break;
+        }
+        memcpy(received_frame, transmitted_frame, stuffed_len * sizeof(int));
+        if (choice == 2) {
+            int index;
+            printf("Enter bit index to flip (0 to %d): ", stuffed_len - 1);
+            scanf("%d", &index);
+            while (getchar() != '\n');
+            if (index >= 0 && index < stuffed_len) {
+                received_frame[index] ^= 1;
+                printf("Flipped bit at index %d!\n", index);
+            }
+        } else if (choice == 3) {
+            int idx1, idx2;
+            printf("Enter two distinct bit indices to flip separated by space: ");
+            scanf("%d %d", &idx1, &idx2);
+            while (getchar() != '\n');
+            if (idx1 >= 0 && idx1 < stuffed_len) received_frame[idx1] ^= 1;
+            if (idx2 >= 0 && idx2 < stuffed_len) received_frame[idx2] ^= 1;
+            printf("Flipped bits at indices %d and %d!\n", idx1, idx2);
+        }
+        receiver_side(received_frame, stuffed_len, input_str, original_data, orig_len, stuffed_frame);
+    }
+    return 0;
+}
