@@ -1,0 +1,12 @@
+class Solution:
+    def findMaximumXOR(self, nums: list[int]) -> int:
+        max_xor = 0
+        n = len(nums)
+        
+        for i in range(n):
+            for j in range(i, n):
+                current_xor = nums[i] ^ nums[j]
+                if current_xor > max_xor:
+                    max_xor = current_xor
+                    
+        return max_xor
